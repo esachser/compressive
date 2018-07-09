@@ -4,6 +4,8 @@
 import numpy as np
 import pickle
 from sporco.admm import bpdn
+from sklearn.linear_model import Lasso as Lasso
+from spgl1 import spg_bpdn
 import glob
 import time
 import cv2
@@ -187,8 +189,10 @@ def testa():
 
     dir_images = "C:/Users/eduardo.sachser/Pictures/*.png"
     images = glob.glob(dir_images)
+    # print(images)
+    # exit()
 
-    img_train = cv2.cvtColor(cv2.imread(images[6]), cv2.COLOR_BGR2GRAY)
+    img_train = cv2.cvtColor(cv2.imread(images[-2]), cv2.COLOR_BGR2GRAY)
     cv2.imshow("Bla", img_train/255.0)
     cv2.waitKey()
     cv2.destroyAllWindows()
@@ -202,40 +206,62 @@ def testa():
                 Ps.append(img_train[i:(i+m11), j:(j+m22)])
 
     best_indexes = [compute_best_index(p.ravel(), 0.0001, 5, kronprod, m11, m22) for p in Ps]
-
+    Psmais = []
+    tantes = time.clock()
     for i in range(len(Ps)):
         a = best_indexes[i]
 
-        t0 = time.clock()
+        # t0 = time.clock()
         phi = np.identity(m11 * m22)
         mask = sorted(np.random.choice(range(m11 * m22), m11 * m22 - m, replace = False))
+        # phi[mask, mask] = 0
         phi = phi[mask, ...]
-        
-        t1 = time.clock()
+        # t1 = time.clock()
         # p = np.ndarray((m11 * m22,1), buffer = Ps[i].flatten())
         p = Ps[i].reshape(m11*m22,1)
-        y = np.dot(phi, p)
+        y = p.T.flat[mask]
+        y2 = p.copy()
+        y2[mask] = 0.0
+        y = np.expand_dims(y, axis=1)   
+        # y = np.dot(phi, p)
         phikron = np.dot(phi, kronprod[a])
+        # print(y.shape)
+        # t2 = time.clock()
 
-        t2 = time.clock()        
-        b = bpdn.BPDN(phikron, y, 0.001)
+        # b = bpdn.BPDN(phikron, y, 0.001)
+        # x = b.solve()
 
-        x = b.solve()
-        newp = np.dot(kronprod[a], x).reshape(m11, m22)
-        t3 = time.clock() 
+        # sb = Lasso(0.001, normalize=False)
+        # sb.fit(phikron, y)
+        # sx = 10 * sb.coef_
+
+        # sx = spg_bpdn(phikron, y, 0.001)
+        # print(y.shape)
+        sx,resid,grad,info = spg_bpdn(phikron, y.ravel(), 0.1)
+
+        # print(x)
+        # print(sx)
+        # exit()
+        newp = np.dot(kronprod[a], sx).reshape(m11, m22)
+        # t3 = time.clock() 
         # newp = np.ndarray((m11,m22), buffer = np.dot(kronprod[a], x))
         Ps[i] = newp
-        print("Tempos: %.3f %.3f %.3f" % (t1 - t0, t2 - t1, t3 - t2))
-        print("Calculated %d/%d" % (i+1, len(Ps)))
+        Psmais.append(y2.reshape(m11,m22))
 
+    tdepois = time.clock()
+
+    print("Tempo de processamento: %.2f" % (tdepois - tantes))
     count = 0
+    img2 = img_train.copy()
     for i in range(0, nl, m11):
         for j in range(0, nc, m22):
             if i + m11 <= nl and j + m22 <= nc:
                 img_train[i:(i+m11), j:(j+m22)] = Ps[count]
+                img2[i:(i+m11), j:(j+m22)] = Psmais[count]
                 count += 1
     
     cv2.imshow("Bla", img_train)
+    cv2.imshow("Bla2", img2)
     cv2.waitKey()
     cv2.destroyAllWindows()
     exit()
