@@ -9,13 +9,15 @@ from spgl1 import spg_bpdn
 import glob
 import time
 import cv2
+from joblib import Parallel, delayed
+import multiprocessing
 
 def generate_random_square_matrices(k, shape):
     return [np.random.random(shape) for i in range(k)]
 
 def eliminamenores(S, m1, m2, eliminar):
     s = np.absolute(S)
-    el = np.argpartition(s.flatten(), eliminar)[:eliminar]
+    el = np.argpartition(s.ravel(), eliminar)[:eliminar]
     S[el] = 0.0
     return S.reshape(m1,m2)
 
@@ -91,7 +93,7 @@ def train_data(P, k, m1, m2, t, upbeta, initial_beta, beta_increment, tolerance)
         # print(vss.shape)
         for i in range(nt):
             npmusv = np.linalg.norm(Ps[i] - np.matmul(np.matmul(U, S[i]), V.transpose(0,2,1)), axis=(1,2))
-            vs = np.exp((-beta) * npmusv * npmusv)
+            vs = np.exp((-beta) * npmusv**2)
             soma = vs.sum()
             M[i] = vs / soma
         # print(np.abs(M - Maux).max())
@@ -105,17 +107,24 @@ def train_data(P, k, m1, m2, t, upbeta, initial_beta, beta_increment, tolerance)
             beta += beta_increment
             print ("Beta Increment to {}!".format(beta))
 
-        continuar = merror >= stop
+        # Testa M, deve ser próximo a 0 ou a 1
+        test0 = np.isclose(M, 0, atol=stop)
+        test1 = np.isclose(M, 1.0, atol=stop)
+        test = np.logical_or(test0, test1)
+        print(M[-1, test[-1] == False])
+        print()
+        
+        continuar = not np.alltrue(test)
         print()
 
     return zip(U,V)
 
 
-k = 32
+k = 10
 m11 = 12
 m22 = 12
-t = 32
-m = 20
+t = 12
+m = 32
 
 def treina():
     dir_images = "C:/Users/eduardo.sachser/Pictures/*.png"
@@ -132,9 +141,7 @@ def treina():
     # print img_train[0:12,0:12]
 
     nl, nc = img_train.shape
-
     Ps = []
-
     for i in range(0, nl, m11):
         for j in range(0, nc, m22):
             if i + m11 <= nl and j + m22 <= nc:
@@ -143,25 +150,21 @@ def treina():
     # Ps = generate_random_square_matrices(1000, (m11,m22))
 
     print(len(Ps))
-    UV = train_data(Ps, k, m11, m22, t, 0.01, 1.0, 3.0,  0.0001)
+    UV = train_data(Ps, k, m11, m22, t, 0.001, 1.0, 20.0,  0.001)
 
     kronprod = [np.kron(U,V) for U, V in UV]
 
-    with open("kronprod2.pkl", 'wb') as fp:
+    with open("kronprod3.pkl", 'wb') as fp:
         pickle.dump(kronprod, fp)
 
     print ("Geradas bases")
     exit()
 
 
-computeidx=1
 def compute_best_index(p, t, s, kron, m1, m2):
-    global computeidx
     k = len(kron)
     e = np.array([np.infty for a in range(k)])
     z = np.ones(k)
-    print("Computing...", computeidx, "...", end=' ')
-    computeidx += 1
     for a in range(k):
         x = np.dot(kron[a].T, p)
 
@@ -177,20 +180,37 @@ def compute_best_index(p, t, s, kron, m1, m2):
             z[a] += 1
 
     a = np.argmin(z) if np.min(z)!=(s+1) else np.argmin(e)
-    print(a)
+    # print(a)
     return a
+
+def recover(p, kronprod, remover):
+    m1, m2 = p.shape
+    a = compute_best_index(p.ravel(), 0.0001, 5, kronprod, m1, m2)
+    phi = np.identity(m1 * m2)
+    mask = np.random.choice(range(m1 * m2), m1 * m2 - remover, replace = False)
+    phi = phi[mask, ...]
+    pnew = p.reshape(m1*m2,1)
+    y = pnew.T.flat[mask]
+    y2 = np.zeros(pnew.shape)
+    y2[mask] = pnew[mask]
+    y = np.expand_dims(y, axis=1) 
+    phikron = np.dot(phi, kronprod[a])
+    sx,_,_,_ = spg_bpdn(phikron, y.ravel(), 0.1)
+    newp = np.dot(kronprod[a], sx).reshape(m1, m2)
+    return newp, y2.reshape(m1,m2)
+
 
 
 def testa():
-    with open('kronprod2.pkl', 'rb') as fp:
+    from skimage.measure import compare_psnr
+
+    with open('kronprod3.pkl', 'rb') as fp:
         kronprod = pickle.load(fp)
 
-    # Ps = generate_random_square_matrices(20, (m11,m22))
 
     dir_images = "C:/Users/eduardo.sachser/Pictures/*.png"
     images = glob.glob(dir_images)
-    # print(images)
-    # exit()
+    print(images)
 
     img_train = cv2.cvtColor(cv2.imread(images[-2]), cv2.COLOR_BGR2GRAY)
     cv2.imshow("Bla", img_train/255.0)
@@ -205,69 +225,40 @@ def testa():
             if i + m11 <= nl and j + m22 <= nc:
                 Ps.append(img_train[i:(i+m11), j:(j+m22)])
 
-    best_indexes = [compute_best_index(p.ravel(), 0.0001, 5, kronprod, m11, m22) for p in Ps]
     Psmais = []
     tantes = time.clock()
-    for i in range(len(Ps)):
-        a = best_indexes[i]
-
-        # t0 = time.clock()
-        phi = np.identity(m11 * m22)
-        mask = sorted(np.random.choice(range(m11 * m22), m11 * m22 - m, replace = False))
-        # phi[mask, mask] = 0
-        phi = phi[mask, ...]
-        # t1 = time.clock()
-        # p = np.ndarray((m11 * m22,1), buffer = Ps[i].flatten())
-        p = Ps[i].reshape(m11*m22,1)
-        y = p.T.flat[mask]
-        y2 = p.copy()
-        y2[mask] = 0.0
-        y = np.expand_dims(y, axis=1)   
-        # y = np.dot(phi, p)
-        phikron = np.dot(phi, kronprod[a])
-        # print(y.shape)
-        # t2 = time.clock()
-
-        # b = bpdn.BPDN(phikron, y, 0.001)
-        # x = b.solve()
-
-        # sb = Lasso(0.001, normalize=False)
-        # sb.fit(phikron, y)
-        # sx = 10 * sb.coef_
-
-        # sx = spg_bpdn(phikron, y, 0.001)
-        # print(y.shape)
-        sx,resid,grad,info = spg_bpdn(phikron, y.ravel(), 0.1)
-
-        # print(x)
-        # print(sx)
-        # exit()
-        newp = np.dot(kronprod[a], sx).reshape(m11, m22)
-        # t3 = time.clock() 
-        # newp = np.ndarray((m11,m22), buffer = np.dot(kronprod[a], x))
-        Ps[i] = newp
-        Psmais.append(y2.reshape(m11,m22))
-
+    num_cores = multiprocessing.cpu_count()
+    print("Cores: %d" % num_cores)
+    func = lambda p: recover(p, kronprod, m)
+    results = Parallel(n_jobs=num_cores)(delayed(func)(p) for p in Ps)
+    # r = [recover(p, kronprod) for p in Ps]
+    Ps, Psmais = zip(*results)
     tdepois = time.clock()
 
     print("Tempo de processamento: %.2f" % (tdepois - tantes))
     count = 0
     img2 = img_train.copy()
+    img1 = img_train.copy()
     for i in range(0, nl, m11):
         for j in range(0, nc, m22):
             if i + m11 <= nl and j + m22 <= nc:
-                img_train[i:(i+m11), j:(j+m22)] = Ps[count]
+                img1[i:(i+m11), j:(j+m22)] = Ps[count]
                 img2[i:(i+m11), j:(j+m22)] = Psmais[count]
                 count += 1
-    
-    cv2.imshow("Bla", img_train)
-    cv2.imshow("Bla2", img2)
+
+    img3 = cv2.medianBlur(img2.copy().astype('float32'), 3)
+            
+    cv2.imshow("Imagem Recuperada", img1)
+    cv2.imshow("Imagem inicial", img2)
+    cv2.imshow("Median Blured", img3)
     cv2.waitKey()
     cv2.destroyAllWindows()
+    print(compare_psnr(img_train, img1))
+    print(compare_psnr(img_train, img3))
     exit()
 
 
-# treina()
-testa()
+treina()
+# testa()
 
 
