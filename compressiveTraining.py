@@ -3,7 +3,6 @@
 
 import numpy as np
 import pickle
-from sporco.admm import bpdn
 from sklearn.linear_model import Lasso as Lasso
 from spgl1 import spg_bpdn
 import glob
@@ -67,17 +66,19 @@ def train_data(P, k, m1, m2, t, upbeta, initial_beta, beta_increment, tolerance)
                     np.multiply(Ps.transpose(1,2,0), M[:,a]).transpose(2,0,1),
                     V[a]),
                 S[:,a].transpose(0,2,1)), axis=0)
-            svdU = np.linalg.svd(z0)
 
             z1 = np.sum(np.matmul(
                 np.matmul(
                     np.multiply(Ps.transpose(2,1,0), M[:,a]).transpose(2,0,1),
                     U[a]),
                 S[:,a]), axis=0)
-            svdV = np.linalg.svd(z1)
 
+            svdU = np.linalg.svd(z0)
+            svdV = np.linalg.svd(z1)
             U[a] = np.matmul(svdU[0], svdU[2])
             V[a] = np.matmul(svdV[0], svdV[2])
+
+            
 
         t3 = time.clock()
         lastM = np.copy(M)
@@ -92,26 +93,36 @@ def train_data(P, k, m1, m2, t, upbeta, initial_beta, beta_increment, tolerance)
         # M = (vss / soma).T
         # print(vss.shape)
         for i in range(nt):
-            npmusv = np.linalg.norm(Ps[i] - np.matmul(np.matmul(U, S[i]), V.transpose(0,2,1)), axis=(1,2))
-            vs = np.exp((-beta) * npmusv**2)
+            npmusv2 = np.sum((Ps[i] - np.matmul(np.matmul(U, S[i]), V.transpose(0,2,1)))**2, axis=(1,2))
+            vs = np.nan_to_num(np.exp((-beta) * npmusv2))
             soma = vs.sum()
-            M[i] = vs / soma
+            # if i==0:
+            #     print(P[i])
+            #     print(S[i])
+            #     print(npmusv2)
+            #     print(vs)
+            M[i] = vs
+            if soma > 0: M[i] = M[i] / soma
         # print(np.abs(M - Maux).max())
 
         t4 = time.clock()
         print("Tempos:", t1-t0, t2-t1, t3-t2, t4-t3)
         # print(M)
         merror = np.abs(M - lastM).max()
-        print(merror)
+        print("%f %.3f" % (merror, beta))
         if merror < error:
             beta += beta_increment
-            print ("Beta Increment to {}!".format(beta))
+            beta_increment += 1.0
+            print ("Beta Increment to %.3f!" % beta)
 
         # Testa M, deve ser próximo a 0 ou a 1
         test0 = np.isclose(M, 0, atol=stop)
         test1 = np.isclose(M, 1.0, atol=stop)
         test = np.logical_or(test0, test1)
-        print(M[-1, test[-1] == False])
+        print(M[0, test[0] == False])
+        # print(M[-1, test[-1] == False])
+        print(M[test[:,:] == False])
+        print(test[test[:,:] == False].shape)
         print()
         
         continuar = not np.alltrue(test)
@@ -120,19 +131,22 @@ def train_data(P, k, m1, m2, t, upbeta, initial_beta, beta_increment, tolerance)
     return zip(U,V)
 
 
-k = 10
+k = 32
 m11 = 12
 m22 = 12
-t = 12
+t = 20
 m = 32
 
 def treina():
-    dir_images = "C:/Users/eduardo.sachser/Pictures/*.png"
+    dir_images = "/home/eduardo/Imagens/*.png"
     images = glob.glob(dir_images)
-    imgidx = int(input(images))
+    for i, img in enumerate(images):
+        print(i, img)
+    imgidx = int(input("Escolha do id da imagem: "))
 
+    # img_train = cv2.color.rgb2gray(cv2.io.imread(images[imgidx]))
     img_train = cv2.cvtColor(cv2.imread(images[imgidx]), cv2.COLOR_BGR2GRAY)
-    cv2.imshow("Bla", img_train)
+    cv2.imshow("Imagem escolhida", img_train)
     cv2.waitKey()
     cv2.destroyAllWindows()
 
@@ -145,12 +159,14 @@ def treina():
     for i in range(0, nl, m11):
         for j in range(0, nc, m22):
             if i + m11 <= nl and j + m22 <= nc:
-                Ps.append(img_train[i:(i+m11), j:(j+m22)])
+                aux = img_train[i:(i+m11), j:(j+m22)].ravel()
+                if not np.allclose(aux, aux[0]):
+                    Ps.append(img_train[i:(i+m11), j:(j+m22)])
 
     # Ps = generate_random_square_matrices(1000, (m11,m22))
 
     print(len(Ps))
-    UV = train_data(Ps, k, m11, m22, t, 0.001, 1.0, 20.0,  0.001)
+    UV = train_data(Ps, k, m11, m22, t, 0.003, 0.1, 1,  0.01)
 
     kronprod = [np.kron(U,V) for U, V in UV]
 
@@ -208,12 +224,13 @@ def testa():
         kronprod = pickle.load(fp)
 
 
-    dir_images = "C:/Users/eduardo.sachser/Pictures/*.png"
+    dir_images = "/home/eduardo/Imagens/*.png"
     images = glob.glob(dir_images)
-    print(images)
+    for i, img in enumerate(images):
+        print(i, img)
 
-    img_train = cv2.cvtColor(cv2.imread(images[-2]), cv2.COLOR_BGR2GRAY)
-    cv2.imshow("Bla", img_train/255.0)
+    img_train = cv2.cvtColor(cv2.imread(images[0]), cv2.COLOR_BGR2GRAY)
+    cv2.imshow("Imagem escolhida", img_train)
     cv2.waitKey()
     cv2.destroyAllWindows()
 
@@ -246,7 +263,7 @@ def testa():
                 img2[i:(i+m11), j:(j+m22)] = Psmais[count]
                 count += 1
 
-    img3 = cv2.medianBlur(img2.copy().astype('float32'), 3)
+    img3 = cv2.medianBlur(img2.copy().astype("float32"), 3)
             
     cv2.imshow("Imagem Recuperada", img1)
     cv2.imshow("Imagem inicial", img2)
