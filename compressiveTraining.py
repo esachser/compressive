@@ -220,20 +220,23 @@ def recover(p, kronprod, remover):
 def testa():
     from skimage.measure import compare_psnr
 
-    with open('kronprod3.pkl', 'rb') as fp:
+    with open('kronmaps.pkl', 'rb') as fp:
         kronprod = pickle.load(fp)
 
 
     dir_images = "/home/eduardo/Imagens/*.png"
     images = glob.glob(dir_images)
+
     for i, img in enumerate(images):
         print(i, img)
+    imgidx = int(input("Escolha do id da imagem: "))
 
-    img_train = cv2.cvtColor(cv2.imread(images[0]), cv2.COLOR_BGR2GRAY)
+    img_train = cv2.cvtColor(cv2.imread(images[imgidx]), cv2.COLOR_BGR2GRAY)
     cv2.imshow("Imagem escolhida", img_train)
     cv2.waitKey()
     cv2.destroyAllWindows()
 
+    t0 = time.clock()
     img_train = img_train / 255.0
     nl, nc = img_train.shape
     Ps = []
@@ -241,6 +244,8 @@ def testa():
         for j in range(0, nc, m22):
             if i + m11 <= nl and j + m22 <= nc:
                 Ps.append(img_train[i:(i+m11), j:(j+m22)])
+    tdivide = time.clock()
+    print("Tempo para dividir: %.2f" % (tdivide - t0))
 
     Psmais = []
     tantes = time.clock()
@@ -251,9 +256,9 @@ def testa():
     # r = [recover(p, kronprod) for p in Ps]
     Ps, Psmais = zip(*results)
     tdepois = time.clock()
-
     print("Tempo de processamento: %.2f" % (tdepois - tantes))
     count = 0
+    
     img2 = img_train.copy()
     img1 = img_train.copy()
     for i in range(0, nl, m11):
@@ -275,7 +280,7 @@ def testa():
     exit()
 
 
-treina()
-# testa()
+# treina()
+testa()
 
 
