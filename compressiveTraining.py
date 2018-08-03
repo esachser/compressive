@@ -2,6 +2,7 @@
 
 
 import numpy as np
+import scipy.sparse as sp
 import pickle
 from sklearn.linear_model import Lasso as Lasso
 from spgl1 import spg_bpdn
@@ -10,6 +11,10 @@ import time
 import cv2
 from joblib import Parallel, delayed
 import multiprocessing
+
+
+num_cores = multiprocessing.cpu_count()
+par = Parallel(n_jobs=num_cores)
 
 def generate_random_square_matrices(k, shape):
     return [np.random.random(shape) for i in range(k)]
@@ -22,6 +27,37 @@ def eliminamenores(S, m1, m2, eliminar):
 
 def elimina(S, k, m1, m2, eliminar):
     return np.apply_along_axis(eliminamenores, 1, S.reshape(k, m1*m2), m1, m2, eliminar)
+
+def processa_S(U, V, m1, m2, eliminar, p):
+    s = np.matmul(np.matmul(U.transpose(0,2,1), p), V).reshape(k, m1*m2)
+    # Tenho que eliminar os (m1*m2 - t) menores valores, colocando-os como 0
+    return np.apply_along_axis(eliminamenores, 1, s, m1, m2, eliminar)
+
+def update_UV(Ps, u, v, s, m):
+    z0 = np.sum(np.matmul(
+        np.matmul(
+            np.multiply(Ps.transpose(1,2,0), m).transpose(2,0,1),
+            v),
+        s.transpose(0,2,1)), axis=0)
+
+    z1 = np.sum(np.matmul(
+        np.matmul(
+            np.multiply(Ps.transpose(2,1,0), m).transpose(2,0,1),
+            u),
+        s), axis=0)
+
+    svdU = np.linalg.svd(z0)
+    svdV = np.linalg.svd(z1)
+    return np.matmul(svdU[0], svdU[2]), np.matmul(svdV[0], svdV[2])
+
+def update_M(U, V, beta, p, s):
+    npmusv2 = np.sum((p - np.matmul(np.matmul(U, s), V.transpose(0,2,1)))**2, axis=(1,2))
+    vs = np.nan_to_num(np.exp((-beta) * npmusv2))
+    soma = vs.sum()
+    ret = vs
+    if soma > 0: 
+        ret /= soma
+    return ret
 
 def train_data(P, k, m1, m2, t, upbeta, initial_beta, beta_increment, tolerance):# error = 0.0001
     # stop = error * error
@@ -43,76 +79,46 @@ def train_data(P, k, m1, m2, t, upbeta, initial_beta, beta_increment, tolerance)
 
     continuar = True
     # Aqui daremos voltas
-    S = np.zeros((nt, k, m1, m2))
+    S = np.zeros((nt, k,m1,m2))
+    # S = sp.DOK((nt, k, m1, m2))
+    # S = np.empty((nt, k), dtype=sp.coo.coo_matrix)
+    # S = da.zeros((nt, k, m1, m2))
     Ps = np.array(P)
     while continuar:
         # Calcula matriz S
-        t0 = time.clock()
-        for i in range(nt):
-            S[i] = np.matmul(np.matmul(U.transpose(0,2,1), Ps[i]), V)
+        t0 = time.monotonic()
+        # for i in range(nt):
+        #     S[i] = func(Ps[i])
+        S = np.array(par(delayed(processa_S)(U, V, m1, m2, eliminar, p) for p in Ps))
 
-        t1 = time.clock()
-        # Tenho que eliminar os (m1*m2 - t) menores valores, colocando-os como 0
-        # S = np.apply_along_axis(elimina, 1, S.reshape(nt, k*m1*m2), k, m1, m2, eliminar)
-        for i in range(nt):
-            S[i] = np.apply_along_axis(eliminamenores, 1, S[i].reshape(k, m1*m2), m1, m2, eliminar)
-
-        t2  = time.clock()
+        t1 = time.monotonic()
 
         # Atualizacao em U[a] e V[a]
-        for a in range(k):
-            z0 = np.sum(np.matmul(
-                np.matmul(
-                    np.multiply(Ps.transpose(1,2,0), M[:,a]).transpose(2,0,1),
-                    V[a]),
-                S[:,a].transpose(0,2,1)), axis=0)
+        # for a in range(k):
+        #     U[a], V[a] = update_UV(Ps, U[a], V[a], S[:,a], M[:,a])
+        uv = par(delayed(update_UV)(Ps, U[a], V[a], S[:,a], M[:,a]) for a in range(k))
+        u, v = zip(*uv)
+        U, V = np.array(u), np.array(v)
 
-            z1 = np.sum(np.matmul(
-                np.matmul(
-                    np.multiply(Ps.transpose(2,1,0), M[:,a]).transpose(2,0,1),
-                    U[a]),
-                S[:,a]), axis=0)
+        t2  = time.monotonic()
 
-            svdU = np.linalg.svd(z0)
-            svdV = np.linalg.svd(z1)
-            U[a] = np.matmul(svdU[0], svdU[2])
-            V[a] = np.matmul(svdV[0], svdV[2])
-
-            
-
-        t3 = time.clock()
         lastM = np.copy(M)
-
         # Atualizacao de M
-        # npmusv = np.linalg.norm((Ps - np.matmul(np.matmul(U, S), V.transpose(0,2,1))
-        #                          .transpose(1,0,2,3)).transpose(1,0,2,3),
-        #                         axis=(2,3))
-
-        # vss = np.exp((-beta) * npmusv * npmusv).T
-        # soma = vss.sum(axis=0)
-        # M = (vss / soma).T
-        # print(vss.shape)
-        for i in range(nt):
-            npmusv2 = np.sum((Ps[i] - np.matmul(np.matmul(U, S[i]), V.transpose(0,2,1)))**2, axis=(1,2))
-            vs = np.nan_to_num(np.exp((-beta) * npmusv2))
-            soma = vs.sum()
-            # if i==0:
-            #     print(P[i])
-            #     print(S[i])
-            #     print(npmusv2)
-            #     print(vs)
-            M[i] = vs
-            if soma > 0: M[i] = M[i] / soma
+        # for i in range(nt):
+        #     M[i] = update_M(U,V,beta,Ps[i],S[i])
+        M = np.array(par(delayed(update_M)(U, V, beta, Ps[i], S[i]) for i in range(nt)))
         # print(np.abs(M - Maux).max())
 
-        t4 = time.clock()
-        print("Tempos:", t1-t0, t2-t1, t3-t2, t4-t3)
+        t3 = time.monotonic()
+        # t4 = time.monotonic()
+        print("Tempos: %.3f %.3f %.3f" % (t1-t0, t2-t1, t3-t2))
         # print(M)
         merror = np.abs(M - lastM).max()
         print("%f %.3f" % (merror, beta))
         if merror < error:
-            beta += beta_increment
-            beta_increment += 1.0
+            # beta += beta_increment
+            # beta_increment *= 1.5
+            beta *= 1.5
             print ("Beta Increment to %.3f!" % beta)
 
         # Testa M, deve ser próximo a 0 ou a 1
@@ -132,10 +138,10 @@ def train_data(P, k, m1, m2, t, upbeta, initial_beta, beta_increment, tolerance)
 
 
 k = 32
-m11 = 12
-m22 = 12
-t = 20
-m = 32
+m11 = 6
+m22 = 6
+t = 8
+m = 72
 
 def treina():
     dir_images = "/home/eduardo/Imagens/*.png"
@@ -166,7 +172,7 @@ def treina():
     # Ps = generate_random_square_matrices(1000, (m11,m22))
 
     print(len(Ps))
-    UV = train_data(Ps, k, m11, m22, t, 0.003, 0.1, 1,  0.01)
+    UV = train_data(Ps, k, m11, m22, t, 0.001, 0.5, 1,  0.01)
 
     kronprod = [np.kron(U,V) for U, V in UV]
 
@@ -199,12 +205,13 @@ def compute_best_index(p, t, s, kron, m1, m2):
     # print(a)
     return a
 
-def recover(p, kronprod, remover):
+def recover(p, kronprod, mask):
     m1, m2 = p.shape
     a = compute_best_index(p.ravel(), 0.0001, 5, kronprod, m1, m2)
-    phi = np.identity(m1 * m2)
-    mask = np.random.choice(range(m1 * m2), m1 * m2 - remover, replace = False)
-    phi = phi[mask, ...]
+    phii = np.identity(m1 * m2)
+    # mask = np.random.choice(range(m1 * m2), m1 * m2 - remover, replace = False)
+    # print(len(mask))
+    phi = phii[mask, ...]
     pnew = p.reshape(m1*m2,1)
     y = pnew.T.flat[mask]
     y2 = np.zeros(pnew.shape)
@@ -212,6 +219,7 @@ def recover(p, kronprod, remover):
     y = np.expand_dims(y, axis=1) 
     phikron = np.dot(phi, kronprod[a])
     sx,_,_,_ = spg_bpdn(phikron, y.ravel(), 0.1)
+    # print(sx.shape)
     newp = np.dot(kronprod[a], sx).reshape(m1, m2)
     return newp, y2.reshape(m1,m2)
 
@@ -236,7 +244,7 @@ def testa():
     cv2.waitKey()
     cv2.destroyAllWindows()
 
-    t0 = time.clock()
+    t0 = time.monotonic()
     img_train = img_train / 255.0
     nl, nc = img_train.shape
     Ps = []
@@ -244,21 +252,31 @@ def testa():
         for j in range(0, nc, m22):
             if i + m11 <= nl and j + m22 <= nc:
                 Ps.append(img_train[i:(i+m11), j:(j+m22)])
-    tdivide = time.clock()
+    tdivide = time.monotonic()
     print("Tempo para dividir: %.2f" % (tdivide - t0))
 
     Psmais = []
-    tantes = time.clock()
+    tantes = time.monotonic()
     num_cores = multiprocessing.cpu_count()
     print("Cores: %d" % num_cores)
-    func = lambda p: recover(p, kronprod, m)
-    results = Parallel(n_jobs=num_cores)(delayed(func)(p) for p in Ps)
+    # func = lambda p: recover(p, kronprod, m)
+    mask = np.zeros((m11,m22),dtype=int)
+    mask[0,:] = 1
+    mask[:,0] = 1
+    mask[-1,:] = 1
+    mask[:,-1] = 1
+    mask[0:m11:2,0:m22:2] = 1
+    mask[1:m11:2,1:m22:2] = 1
+    # np.fill_diagonal(mask, 1)
+    mask = np.argwhere(mask.ravel()).ravel()
+    print(len(mask))
+    results = par(delayed(recover)(p, kronprod, mask) for p in Ps)
     # r = [recover(p, kronprod) for p in Ps]
     Ps, Psmais = zip(*results)
-    tdepois = time.clock()
+    tdepois = time.monotonic()
     print("Tempo de processamento: %.2f" % (tdepois - tantes))
     count = 0
-    
+
     img2 = img_train.copy()
     img1 = img_train.copy()
     for i in range(0, nl, m11):
@@ -268,7 +286,7 @@ def testa():
                 img2[i:(i+m11), j:(j+m22)] = Psmais[count]
                 count += 1
 
-    img3 = cv2.medianBlur(img2.copy().astype("float32"), 3)
+    img3 = cv2.GaussianBlur(img1.copy().astype("float32"), (3,3), 0)
             
     cv2.imshow("Imagem Recuperada", img1)
     cv2.imshow("Imagem inicial", img2)
@@ -280,7 +298,7 @@ def testa():
     exit()
 
 
-# treina()
-testa()
+treina()
+# testa()
 
 
