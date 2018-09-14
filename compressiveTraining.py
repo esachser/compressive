@@ -4,17 +4,20 @@
 import numpy as np
 import scipy.sparse as sp
 import pickle
-from sklearn.linear_model import Lasso as Lasso
+from sklearn.linear_model import lasso_path, orthogonal_mp, Lasso, orthogonal_mp_gram
 from spgl1 import spg_bpdn
+from spams import lasso, omp, ompMask, lassoMask
 import glob
 import time
 import cv2
 from joblib import Parallel, delayed
 import multiprocessing
-
+from threading import Thread
 
 num_cores = multiprocessing.cpu_count()
+# num_cores = 1
 par = Parallel(n_jobs=num_cores)
+parar = False
 
 def generate_random_square_matrices(k, shape):
     return [np.random.random(shape) for i in range(k)]
@@ -60,6 +63,7 @@ def update_M(U, V, beta, p, s):
     return ret
 
 def train_data(P, k, m1, m2, t, upbeta, initial_beta, beta_increment, tolerance):# error = 0.0001
+    global parar
     # stop = error * error
     error = upbeta
     beta = initial_beta
@@ -84,19 +88,22 @@ def train_data(P, k, m1, m2, t, upbeta, initial_beta, beta_increment, tolerance)
     # S = np.empty((nt, k), dtype=sp.coo.coo_matrix)
     # S = da.zeros((nt, k, m1, m2))
     Ps = np.array(P)
+    prosd = delayed(processa_S)
+    upuvd = delayed(update_UV)
+    upmd = delayed(update_M)
     while continuar:
         # Calcula matriz S
         t0 = time.monotonic()
         # for i in range(nt):
         #     S[i] = func(Ps[i])
-        S = np.array(par(delayed(processa_S)(U, V, m1, m2, eliminar, p) for p in Ps))
+        S = np.array(par(prosd(U, V, m1, m2, eliminar, p) for p in Ps))
 
         t1 = time.monotonic()
 
         # Atualizacao em U[a] e V[a]
         # for a in range(k):
         #     U[a], V[a] = update_UV(Ps, U[a], V[a], S[:,a], M[:,a])
-        uv = par(delayed(update_UV)(Ps, U[a], V[a], S[:,a], M[:,a]) for a in range(k))
+        uv = par(upuvd(Ps, U[a], V[a], S[:,a], M[:,a]) for a in range(k))
         u, v = zip(*uv)
         U, V = np.array(u), np.array(v)
 
@@ -106,7 +113,7 @@ def train_data(P, k, m1, m2, t, upbeta, initial_beta, beta_increment, tolerance)
         # Atualizacao de M
         # for i in range(nt):
         #     M[i] = update_M(U,V,beta,Ps[i],S[i])
-        M = np.array(par(delayed(update_M)(U, V, beta, Ps[i], S[i]) for i in range(nt)))
+        M = np.array(par(upmd(U, V, beta, Ps[i], S[i]) for i in range(nt)))
         # print(np.abs(M - Maux).max())
 
         t3 = time.monotonic()
@@ -114,11 +121,13 @@ def train_data(P, k, m1, m2, t, upbeta, initial_beta, beta_increment, tolerance)
         print("Tempos: %.3f %.3f %.3f" % (t1-t0, t2-t1, t3-t2))
         # print(M)
         merror = np.abs(M - lastM).max()
-        print("%f %.3f" % (merror, beta))
+        print("%.8f %.3f %.3f" % (merror, beta, beta_increment))
         if merror < error:
             # beta += beta_increment
             # beta_increment *= 1.5
-            beta *= 1.5
+            if beta_increment > 1.01: beta_increment -= 0.01
+            if beta > 500000 : beta_increment = 1.001
+            beta *= beta_increment
             print ("Beta Increment to %.3f!" % beta)
 
         # Testa M, deve ser próximo a 0 ou a 1
@@ -131,16 +140,16 @@ def train_data(P, k, m1, m2, t, upbeta, initial_beta, beta_increment, tolerance)
         print(test[test[:,:] == False].shape)
         print()
         
-        continuar = not np.alltrue(test)
+        continuar = not(np.alltrue(test) or parar)
         print()
 
     return zip(U,V)
 
 
-k = 32
-m11 = 6
-m22 = 6
-t = 8
+k = 18
+m11 = 12
+m22 = 12
+t = 10
 m = 72
 
 def treina():
@@ -172,7 +181,7 @@ def treina():
     # Ps = generate_random_square_matrices(1000, (m11,m22))
 
     print(len(Ps))
-    UV = train_data(Ps, k, m11, m22, t, 0.001, 0.5, 1,  0.01)
+    UV = train_data(Ps[::4], k, m11, m22, t, 0.0007, 0.5, 1.5,  0.01)
 
     kronprod = [np.kron(U,V) for U, V in UV]
 
@@ -183,53 +192,110 @@ def treina():
     exit()
 
 
-def compute_best_index(p, t, s, kron, m1, m2):
+def eliminamenores2(S, eliminar):
+    s = np.absolute(S)
+    el = np.argpartition(s, eliminar)[:eliminar]
+    S[el] = 0.0
+    return S
+
+def elimina2(S, k, eliminar):
+    return np.apply_along_axis(eliminamenores2, 1, S, eliminar)
+
+def compute_best_index(p, t, s, kron):
     k = len(kron)
-    e = np.array([np.infty for a in range(k)])
-    z = np.ones(k)
-    for a in range(k):
-        x = np.dot(kron[a].T, p)
+    psize = p.shape[0]
+    xs = np.matmul(kron.transpose(0,2,1), p)
+    xs = elimina(xs, k, psize, 1, int(psize-s))
+    # for a in range(k):
+    #     x = np.dot(kron[a].T, p)
+    #     idxs = np.argpartition(x, int(psize-s-1))[int(psize-s):]
+    #     idxs = idxs[np.argsort(x[idxs])]
+    #     y = np.zeros(x.shape)
+    #     while (z[a] <= s) and (e[a] > t):
+    #         y[idxs[int(-z[a])]] = x[idxs[int(-z[a])]]
+    #         e[a] = np.sum(np.square(p - np.matmul(kron[a], y)))
+    #         z[a] += 1
+            # t0 = time.monotonic()
+            # print(np.matmul(kron[a], y).shape)
+            # t1 = time.monotonic()
+        # print(a, "T:", e[a])
+    # print(np.square(p - np.matmul(kron, xs).reshape(k,psize)).shape)
+    err = np.sum(np.square(p - np.matmul(kron, xs).reshape(k,psize)), axis=1)
 
-        while (z[a] <= s) and (e[a] > t):
-            # Eliminar m1*m2 - z[a]
-            eliminar = int(m1 * m2 - z[a])
-            y = x.copy()
-            el = np.argpartition(y, eliminar)[:eliminar]
-            y[el] = 0.0
-
-            # print y
-            e[a] = np.linalg.norm(p - np.dot(kron[a], y))**2.0
-            z[a] += 1
-
-    a = np.argmin(z) if np.min(z)!=(s+1) else np.argmin(e)
-    # print(a)
-    return a
+    # a = np.argmin(z) if np.min(z)!=(s+1) else np.argmin(e)
+    # print(a, np.argmin(err))
+    return np.argmin(err)
 
 def recover(p, kronprod, mask):
-    m1, m2 = p.shape
-    a = compute_best_index(p.ravel(), 0.0001, 5, kronprod, m1, m2)
-    phii = np.identity(m1 * m2)
+    # t0 = time.monotonic()
+    # m1, m2 = p.shape
+    # a = 18
+    a = compute_best_index(p.ravel(), 0.001, 20, kronprod)
+    # print(a)
+    # t1 = time.monotonic()
     # mask = np.random.choice(range(m1 * m2), m1 * m2 - remover, replace = False)
-    # print(len(mask))
-    phi = phii[mask, ...]
-    pnew = p.reshape(m1*m2,1)
-    y = pnew.T.flat[mask]
-    y2 = np.zeros(pnew.shape)
-    y2[mask] = pnew[mask]
-    y = np.expand_dims(y, axis=1) 
-    phikron = np.dot(phi, kronprod[a])
-    sx,_,_,_ = spg_bpdn(phikron, y.ravel(), 0.1)
+    # y = np.take(p, mask, axis=1).T
+    # y = np.take(p, mask)
+    y = np.expand_dims(p, 1)
+    # print(y.shape)
+    # phikron = np.take(kronprod[a], mask, axis=0)
+    phikron = kronprod[a]
+    # np.savetxt('phik.txt', phikron)
+    # y = np.take(p.ravel(),mask)
+    # phikron = np.take(kronprod[a], mask, axis=0)#[mask, ...]
+    # t2 = time.monotonic()
+    # sx,_,_,_ = spg_bpdn(phikron, y.ravel(), 0.1)
+    # sx = lasso(np.asfortranarray(y.ravel()), np.asfortranarray(phikron), lambda1=0.02, return_reg_path=False).toarray()
+    # _,sx,_ = lasso_path(phikron, y, eps=0.0001, n_alphas=1, return_n_iter=False)
+    # print(y.shape)
+    msk = np.expand_dims((mask != 0),0)
+    # sx = ompMask(np.asfortranarray(y), np.asfortranarray(phikron), np.asfortranarray(msk), lambda1=0.01, return_reg_path=False).toarray()
+    # sx = omp(np.asfortranarray(y), np.asfortranarray(phikron), eps=0.03, return_reg_path=False).toarray()
+    # sx = lassoMask(np.asfortranarray(y), np.asfortranarray(phikron), np.asfortranarray(msk), lambda1=0.01).toarray()
+    sx = orthogonal_mp(phikron, y, tol=0.03)
     # print(sx.shape)
-    newp = np.dot(kronprod[a], sx).reshape(m1, m2)
-    return newp, y2.reshape(m1,m2)
+    # t3 = time.monotonic()
+    # t4 = time.monotonic()
+    newp = np.matmul(kronprod[a], sx)
+    # print(newp.shape)
+    # print("Tempos: %.5f %.5f %.5f" % (t1 - t0, t2 - t1, t3 - t2), a)
+    return newp
 
+def recover_same_kron(p, kronprod, mask):
+    # y = np.take(p, mask, axis=1).T
+    # p[:,mask] = 0.0
+    y = p.T
+    # print(y.shape)
+    # # y = np.take(p, mask)
+    # phikron = np.take(kronprod, mask, axis=0)
+    phikron = kronprod
+    # phikron /= np.linalg.norm(phikron, axis=0)
+    # print(np.linalg.norm(phikron, axis=0))
+    
+    # _,sx,_ = lasso_path(phikron, y, eps=0.001, n_alphas=1, return_n_iter=False)
+    # print(y.shape)
+    msk = np.array([mask for _ in range(y.shape[1])]).T
+    # print(msk.shape)
+    # print((mask != 0))
+    # sx = ompMask(np.asfortranarray(y), np.asfortranarray(phikron), np.asfortranarray((msk != 0)), eps=0.01, return_reg_path=False).toarray()
+    sx = omp(np.asfortranarray(y), np.asfortranarray(phikron), eps=0.03, return_reg_path=False).toarray()
+    # sx = lasso(np.asfortranarray(y), np.asfortranarray(phikron), lambda1=0.01, return_reg_path=False).toarray()
+    # sx = lassoMask(np.asfortranarray(y), np.asfortranarray(phikron), np.asfortranarray((msk != 0)), lambda1=0.01).toarray()
+    # sx = orthogonal_mp_gram(phikron.T.dot(phikron), phikron.T.dot(y))
+    # print(sx.shape)
+    # sx = orthogonal_mp(phikron, y, tol=0.0001)
+    newp = np.matmul(kronprod, sx).T
+    return newp
 
+from recovering import recover_cython, recover_patches
+
+m11, m22 = 12, 12
 
 def testa():
     from skimage.measure import compare_psnr
 
-    with open('kronmaps.pkl', 'rb') as fp:
-        kronprod = pickle.load(fp)
+    with open('kr12.pkl', 'rb') as fp:
+        kronprod = np.array(pickle.load(fp))
 
 
     dir_images = "/home/eduardo/Imagens/*.png"
@@ -244,61 +310,92 @@ def testa():
     cv2.waitKey()
     cv2.destroyAllWindows()
 
-    t0 = time.monotonic()
     img_train = img_train / 255.0
     nl, nc = img_train.shape
+    img2 = img_train.copy()
+    img2[1::2,:] = 0.0
+    img2[::2,1::2] = 0.0
+    print(np.argwhere(img2.ravel()).shape, img2.ravel().shape)
+    t0 = time.monotonic()
+    img4 = img2.copy()
+    # img4[2:-1:2, 1:-1:2] = (img4[2:-1:2, :-2:2] + img4[2:-1:2, 2::2] + img4[1:-2:2, 1:-1:2] + img4[3::2, 1:-1:2]) / 4.0
+    # img4[1:-1:2, 2:-1:2] = (img4[1:-1:2, 1:-2:2] + img4[1:-1:2, 3::2] + img4[:-2:2, 2:-1:2] + img4[2::2, 2:-1:2]) / 4.0
+    # img4[0, 1:-1:2] = (img4[0, :-2:2] + img4[0, 2::2] + img4[1, 1:-1:2]) / 3.0
+    # img4[-1, 1:-1:2] = (img4[-1, :-2:2] + img4[-1, 2::2] + img4[-2, 1:-1:2]) / 3.0
+    # img4[1:-1:2, 0] = (img4[1:-1:2, 1] + img4[:-2:2, 0] + img4[2::2, 0]) / 3.0
+    # img4[2:-1:2, -1] = (img4[2:-1:2, -2] + img4[1:-2:2, -1] + img4[3::2, -1]) / 3.0
+    img4[::2, 1:-1:2] = (img4[::2, :-3:2] + img4[::2, 2::2]) / 2.0
+    if img4.shape[1] % 2 == 1: img4[::2,-1] = img4[::2,-2]
+    img4[1:-1:2, :] = (img4[:-2:2,:] + img4[2::2,:]) / 2.0
+    if img4.shape[0] % 2 == 1: img4[-1,:] = img4[-2,:]
+
+    #### Define a Máscara ####
+    mask = np.ones((m11,m22),dtype=int)
+    # mask[2:-1:2,2:-1] = 0
+    # mask[1:-1:2,1:-1:2] = 0
+    # mask = np.argwhere(mask.ravel()).ravel()
+    mask = mask.reshape(m11*m22)
+    ##########################
+
+
     Ps = []
     for i in range(0, nl, m11):
         for j in range(0, nc, m22):
             if i + m11 <= nl and j + m22 <= nc:
-                Ps.append(img_train[i:(i+m11), j:(j+m22)])
+                p = img4[i:(i+m11), j:(j+m22)]
+                Ps.append(p)
+
     tdivide = time.monotonic()
     print("Tempo para dividir: %.2f" % (tdivide - t0))
 
-    Psmais = []
+    nps = np.array([p.ravel() for p in Ps])
+    bestidxs = np.apply_along_axis(compute_best_index, 1, nps, 0.001, 20, kronprod)
+    best = np.bincount(bestidxs).argmax()
+    print(set(bestidxs), best)
     tantes = time.monotonic()
-    num_cores = multiprocessing.cpu_count()
-    print("Cores: %d" % num_cores)
     # func = lambda p: recover(p, kronprod, m)
-    mask = np.zeros((m11,m22),dtype=int)
-    mask[0,:] = 1
-    mask[:,0] = 1
-    mask[-1,:] = 1
-    mask[:,-1] = 1
-    mask[0:m11:2,0:m22:2] = 1
-    mask[1:m11:2,1:m22:2] = 1
-    # np.fill_diagonal(mask, 1)
-    mask = np.argwhere(mask.ravel()).ravel()
-    print(len(mask))
-    results = par(delayed(recover)(p, kronprod, mask) for p in Ps)
-    # r = [recover(p, kronprod) for p in Ps]
-    Ps, Psmais = zip(*results)
-    tdepois = time.monotonic()
-    print("Tempo de processamento: %.2f" % (tdepois - tantes))
+    # Ps = par(delayed(recover_cython)(p.ravel(), kronprod, mask) for p in Ps)
+    Ps = recover_same_kron(nps, kronprod[best], mask)
+    # Ps = [recover(p.ravel(), kronprod, mask) for p in Ps]
+    # Ps = [recover_cython(p.ravel(), kronprod, mask).reshape(m11,m22) for p in Ps]
+    # for i in range(len(Ps)):
+    #     # t0 = time.monotonic()
+    #     Ps[i] = recover_cython(Ps[i].ravel(), kronprod, mask).reshape(m11,m22)
+    #     # print(time.monotonic() - t0)
+    # recover_patches(Ps, kronprod, mask)
+    # Ps, Psmais = zip(*results)
     count = 0
 
-    img2 = img_train.copy()
+
     img1 = img_train.copy()
     for i in range(0, nl, m11):
         for j in range(0, nc, m22):
             if i + m11 <= nl and j + m22 <= nc:
-                img1[i:(i+m11), j:(j+m22)] = Ps[count]
-                img2[i:(i+m11), j:(j+m22)] = Psmais[count]
+                img1[i:(i+m11), j:(j+m22)] = Ps[count].reshape(m11,m22)
                 count += 1
 
-    img3 = cv2.GaussianBlur(img1.copy().astype("float32"), (3,3), 0)
-            
+
+
+    tdepois = time.monotonic()
+    print("Tempo de processamento: %.2f" % (tdepois - tantes))
+    # img3 = cv2.GaussianBlur(img2.copy().astype("float32"), (3,3), 0)
+
     cv2.imshow("Imagem Recuperada", img1)
-    cv2.imshow("Imagem inicial", img2)
-    cv2.imshow("Median Blured", img3)
+    # cv2.imshow("Imagem inicial", img2)
+    cv2.imshow("Media", img4)
     cv2.waitKey()
     cv2.destroyAllWindows()
     print(compare_psnr(img_train, img1))
-    print(compare_psnr(img_train, img3))
+    print(compare_psnr(img_train, img4))
     exit()
 
+def testaparada():
+    global parar
+    while not parar:
+        if str(input()) == 'q':
+            parar = True
 
-treina()
-# testa()
-
+# Thread(daemon=True, target=testaparada).start()
+# treina()
+testa()
 
