@@ -14,7 +14,7 @@ m11, m22 = 8,8
 if __name__ == '__main__':
     from skimage.measure import compare_psnr
 
-    D = np.loadtxt('dltrain/dl8_yuv_ds96.txt')
+    D = np.loadtxt('dltrain/dl8_yuv_ds128_geral.txt')
     
     dir_images = "/home/eduardo/Imagens/*.png"
     images = glob.glob(dir_images)
@@ -50,32 +50,31 @@ if __name__ == '__main__':
         ids, vss, sh, mptp = f['ids'], f['vs'], f['sh'], f['mptp']
 
     t0 = time.monotonic()
+    img1 = np.zeros_like(img_train)
     vmin = mptp[0]
     vptp = mptp[1]
 
     s = np.zeros(sh)
+    vss = (vss * vptp / 65535) + vmin
+    tam = np.count_nonzero(ids, axis=1)
+    ids = ids - 1
     for i in range(s.shape[0]):
-        vs = vss[i]
-        idss = ids[i, ids[i]!=0] - 1
-        s[i, idss] = (vs[:idss.shape[0]] * vptp / 65535) + vmin
-    
-    newp = s.dot(D).reshape(-1, m11, m22, 3)
-    # print(newp.shape)
-    count = 0
-    img1 = img_train.copy()
-    for i in range(0, nl, m11):
-        for j in range(0, nc, m22):
-            if i + m11 <= nl and j + m22 <= nc:
-                img1[i:(i+m11), j:(j+m22)] = newp[count]
-                count += 1
-    print("Recovery time: %f" % (time.monotonic() - t0))
+        s[i, ids[i,:tam[i]]] = vss[i,:tam[i]]
 
+
+    newp = D.T.dot(s.T).T
+    img1 = np.vstack((spl.reshape(-1,m11,m22,3).transpose(1,0,2,3).reshape(m11,-1,3) for spl in np.vsplit(newp, int(nl / m11))))
+    # img1 = np.hstack((spl for spl in np.vsplit(newp, int(nl / m11)))).reshape(-1,m11,m22,3)#.reshape(nl,nc,3)
+    print(img1.shape)
+    print("Recovery time: %f" % (time.monotonic() - t0))
 
     imgrgb = color.yuv2rgb(img1).clip(0,1)
 
-    print(compare_psnr(img_train, img1))
-    print(compare_psnr(img_train, color.rgb2yuv(img2)))
+    print(compare_psnr(color.yuv2rgb(img_train).clip(0,1), imgrgb))
+    print(compare_psnr(color.yuv2rgb(img_train).clip(0,1), img2))
     io.imsave('rcv.png', imgrgb)
+    # # io.imshow(imgrgb)
+    # io.show()
     # io.imshow(imgrgb)
     # io.show()
 
