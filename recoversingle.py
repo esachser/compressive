@@ -16,11 +16,6 @@ num_cores = multiprocessing.cpu_count()
 par = Parallel(n_jobs=num_cores)
     
 
-def clip(img):
-    img = np.minimum(np.ones(img.shape), img)
-    img = np.maximum(np.zeros(img.shape), img)
-    return img
-
 def recover_same_kron(p, kronprod, L):
     y = p.T
     # print(y.shape, y.dtype)
@@ -38,7 +33,7 @@ sparsity = 24
 if __name__ == "__main__":
     from skimage.measure import compare_psnr
 
-    D = np.loadtxt('dltrain/dl8_yuv_ds96.txt')
+    D = np.loadtxt('dltrain/dl8_yuv_ds128_geral.txt')
     # D = np.loadtxt('dl8_rgb_ds192.txt')
 
     dir_images = "/home/eduardo/Imagens/*.png"
@@ -100,18 +95,24 @@ if __name__ == "__main__":
     # print(vs.shape, ids.shape)
     np.savez_compressed('img.npz', ids=ids, vs=vs, mptp=[vmin, vptp], sh=ss.shape)
     # s = s.toarray()
-    Ps = s.transpose().dot(D).reshape(Ps.shape[0], m11, m22, -1)
+    Ps = s.transpose().dot(D)# .reshape(Ps.shape[0], m11, m22, -1)
     print(Ps.shape)
     # Ps = np.asarray(par(delayed(recover_same_kron)(ps, d) for ps, d in 
     #                 [(Ps[:,0].reshape(Ps.shape[0],-1), Dr), (Ps[:,1].reshape(Ps.shape[0],-1), Dg), (Ps[:,2].reshape(Ps.shape[0],-1), Db)]))
     # Ps = Ps.reshape(3, -1, m11, m22).transpose(1,2,3,0)
-    count = 0
-    img1 = img_train.copy()
-    for i in range(0, nl, m11):
-        for j in range(0, nc, m22):
-            if i + m11 <= nl and j + m22 <= nc:
-                img1[i:(i+m11), j:(j+m22)] = Ps[count].reshape(m11,m22,-1)
-                count += 1
+    # count = 0
+    # img1 = img_train.copy()
+    # for i in range(0, nl, m11):
+    #     for j in range(0, nc, m22):
+    #         if i + m11 <= nl and j + m22 <= nc:
+    #             img1[i:(i+m11), j:(j+m22)] = Ps[count].reshape(m11,m22,-1)
+    #             count += 1
+
+    t0 = time.monotonic()
+    img1 = np.vstack((spl.reshape(-1,m11,m22,3).transpose(1,0,2,3).reshape(m11,-1,3) for spl in np.vsplit(Ps, int(nl / m11))))
+    # img1 = np.hstack((spl for spl in np.vsplit(newp, int(nl / m11)))).reshape(-1,m11,m22,3)#.reshape(nl,nc,3)
+    print(img1.shape)
+    print("Recovery time: %f" % (time.monotonic() - t0))
     # img1 = image.reconstruct_from_patches_2d(Ps.reshape(Ps.shape[0], m11, m22), img_train.shape)
 
 
@@ -124,6 +125,7 @@ if __name__ == "__main__":
     io.imsave('image.jpeg', color.yuv2rgb(img4).clip(0,1))
     # io.show()
     # print(compare_psnr(img_train, imgrgb))
-    print(compare_psnr(img_train, img1.clip(-1,1)))
+    # print(compare_psnr(img_train, img1.clip(-1,1)))
+    print(compare_psnr(color.yuv2rgb(img_train).clip(0,1), imgrgb))
     # print(compare_psnr(img_train, img4))
     exit()
