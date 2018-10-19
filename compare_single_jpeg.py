@@ -14,7 +14,7 @@ m11, m22 = 8,8
 if __name__ == '__main__':
     from skimage.measure import compare_psnr
 
-    D = np.loadtxt('dltrain/dl8_yuv_ds128_geral.txt')
+    D = np.loadtxt('dltrainfiles/dl8_yuv_ds128_720pmoria2.txt')
     
     dir_images = "/home/eduardo/Imagens/*.png"
     images = glob.glob(dir_images)

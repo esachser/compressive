@@ -3,23 +3,31 @@ import glob
 import spams
 import time
 from skimage import io, color
-from sklearn.feature_extraction import image
-from sklearn.linear_model import orthogonal_mp_gram
 import matplotlib.pyplot as plt
+
+import dictlearn as dl
+
+sizeX = 8
+sizeY = 8
 
 if __name__ == "__main__":
     from skimage.measure import compare_psnr
 
-    D = np.loadtxt('dltrain/dl8_yuv_ds96_2.txt')
+    D = np.loadtxt('dltrainfiles/dl8_rgb_ds64_720pBunny.txt')
+    # D = np.loadtxt('ksvdtrain/ksvd8_rgb_ds128.txt')
+    print(D.shape)
     
     D = D.reshape(-1, 8, 8, 3)
+    # D = (D - D.min()) / 2
     D = (D - D.min()) / np.ptp(D)
-    print(D.shape)
-    ps = []
-    for i in range(D.shape[0]):
-        ps.append(D[i])
     print(D.max(), D.min())
-    
-    io.imshow(np.hstack(ps))
+    # D = (D+1) / 2
+    # D = color.ycbcr2rgb(D)
+
+    # l, c = (0,0)
+    for i in range(D.shape[0]):
+        plt.subplot(sizeX, sizeY, i+1)
+        plt.axis('off')
+        plt.imshow(D[i])
     # io.imshow(color.yuv2rgb(D).clip(0,1))
     io.show()
