@@ -9,8 +9,8 @@ import spams
 import dictlearn as dl
 
 dict_size = 64
-target_sparsity = 12
-patch_size = (8,8)
+target_sparsity = 5
+patch_size = (4,4)
 
 if __name__ == "__main__":
     dir_images = "/home/eduardo/Documentos/compressive/trainframes/*"
@@ -51,19 +51,24 @@ if __name__ == "__main__":
     # patches = np.hstack((image.extract_patches_2d(color.rgb2yuv(img_train), patch_size)) for img_train in img_trains)
     patches = []
     for img_train in img_trains:
-        # img_train = color.rgb2ycbcr(img_train) / 255.
         img_train = img_train / 255.
         for i in range(0, img_train.shape[0], patch_size[0]):
             for j in range(0, img_train.shape[1], patch_size[1]):
                 if i + patch_size[0] <= img_train.shape[0] and j + patch_size[1] <= img_train.shape[1]:
                     p = img_train[i:(i+patch_size[0]), j:(j+patch_size[1])]
                     patches.append(p)
+        # patches = np.array(patches)
+        # # print(patches.shape)        
+        # X = patches.reshape(patches.shape[0], -1)[::1]
+        # D = spams.trainDL(np.asfortranarray(X.T), **param)
+        # param['D'] = D
+
     patches = np.array(patches)
-    print(patches.shape)
+    # print(patches.shape)
     X = patches.reshape(patches.shape[0], -1)[::1]
-    print(X.max())
-    print(X.shape, X.dtype)
-    input()
+    # print(X.max())
+    # print(X.shape, X.dtype)
+    # input()
     # X /= .01
 
     # p1 = np.vsplit(img_train, range(patch_size[0], img_train.shape[0], patch_size[0]))
@@ -76,4 +81,4 @@ if __name__ == "__main__":
     # D = np.array(dl.ksvd(X.T, iniD, 1000, target_sparsity)).T
     print(D.shape)
 
-    np.savetxt('dltrainfiles/dl8_rgb_ds64_720pBunny.txt', D)
+    np.savetxt('dltrainfiles/dl4_rgb_ds64_Bunny.txt', D)
