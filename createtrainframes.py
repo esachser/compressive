@@ -14,11 +14,13 @@ def removefiles(folder):
         except Exception as e:
             print(e)
 
-video = '../Videos/big_buck_bunny_720p24.y4m'
+videoname = 'big_buck_bunny_720p24.y4m'
+
+video = '../Videos/' + videoname
 dirtrain = os.path.abspath('../trainframes/')
 
 # Quantos segundos entre cada aquisição
-secinterval = 10
+secinterval = 3
 
 def main():
     cap = cv2.VideoCapture(video)
@@ -27,7 +29,7 @@ def main():
     interval = fps*secinterval
     total = cap.get(cv2.CAP_PROP_FRAME_COUNT) / interval
     
-    removefiles(dirtrain)
+    # removefiles(dirtrain)
 
     while True:
         # for _ in range(int(interval)): cap.grab()
@@ -36,7 +38,7 @@ def main():
         ret, frame = cap.read()
         cnt+=1
         if not ret: break
-        cv2.imwrite(os.path.join(dirtrain, 'frame_%d.png' % (cnt)), frame)
+        cv2.imwrite(os.path.join(dirtrain, '%s_%d.png' % (videoname.split('.')[0],cnt)), frame)
         print("%d/%d frames generated" % (cnt, total))
 
 if __name__ == '__main__':

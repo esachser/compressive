@@ -6,15 +6,20 @@ from skimage import io, color
 from sklearn.feature_extraction import image
 from sklearn.linear_model import orthogonal_mp_gram
 import matplotlib.pyplot as plt
+from scipy.io import savemat, loadmat
+import lzma
+import gzip
+import bz2
+import struct
 
-import dictlearn as dl
+# import dictlearn as dl
 
-from joblib import Parallel, delayed
-import multiprocessing
-from threading import Thread
+# from joblib import Parallel, delayed
+# import multiprocessing
+# from threading import Thread
 
-num_cores = multiprocessing.cpu_count()
-par = Parallel(n_jobs=num_cores)
+# num_cores = multiprocessing.cpu_count()
+# par = Parallel(n_jobs=num_cores)
     
 
 def recover_same_kron(p, kronprod, L):
@@ -28,13 +33,13 @@ def recover_same_kron(p, kronprod, L):
     return sx
 
 
-m11, m22 = 8,8
-sparsity = 16
+m11, m22 = 4,4
+sparsity = 5
 
 if __name__ == "__main__":
     from skimage.measure import compare_psnr
 
-    D = np.loadtxt('dltrainfiles/dl8_ycbcr_ds64_720pmoria.txt')
+    D = np.loadtxt('dltrainfiles/dl4_rgb_ds16_maps.txt')
     # D = np.loadtxt('dl8_rgb_ds192.txt')
     # D = io.imread('dict.png').astype(float) / 65535
     # dl.visualize_dictionary(D, 16, 8)
@@ -51,7 +56,10 @@ if __name__ == "__main__":
     if image.shape[-1] == 4:
         image = color.rgba2rgb(image)
 
-    img_train = color.rgb2ycbcr(image) / 255.
+    if image.max() > 1.0:
+        img_train = image / 255.
+    else:
+        img_train = image
     # img_train = io.imread(images[imgidx])[:,:,:3]
     nl, nc, _= img_train.shape
     ml = nl % m11
@@ -78,10 +86,12 @@ if __name__ == "__main__":
     Ps = np.array(Ps)
     tantes = time.monotonic()
     # print(Ps.shape)
-    print(img_train[0,0])
-    print(Ps[0,0,0])
-    Ps = Ps.reshape(Ps.shape[0],-1)
-    print(Ps[0,0:3])
+    # print(img_train[0,0])
+    # print(Ps[0,0,0])
+    # intersect = np.mean(Ps)
+    intersect = 0.0
+    Ps = Ps.reshape(Ps.shape[0],-1) - intersect
+    # print(Ps[0,0:3])
     s = recover_same_kron(Ps, D, sparsity)
 
     tdepois = time.monotonic()
@@ -89,27 +99,50 @@ if __name__ == "__main__":
     # exit()
 
     ## Pensar num jeito de salvar
-    spams.ssp.save_npz('image.npz', s.astype(np.float16))
     ss = s.transpose()
     vmin = ss.min()
     vptp = ss.max() - vmin
-    vs = np.zeros((ss.shape[0], sparsity), dtype=np.uint16)
+    vs = np.zeros((ss.shape[0], sparsity), dtype=np.uint8)
     ids = np.zeros_like(vs, dtype=np.uint8)
+    vslist = []
+    idslist = []
     for i in range(ss.shape[0]):
         nz = ss.getrow(i).toarray()
         idss = nz.nonzero()
         nz = nz[nz!=0.0]
-        vs[i,:nz.shape[0]] = np.round((nz - vmin) * 65535.0 / vptp)
+        vs[i,:nz.shape[0]] = np.minimum(255,np.round((nz - vmin) * 255.0 / vptp))
         ids[i,:nz.shape[0]] = idss[1]+1
+        vslist.extend(vs[i,:nz.shape[0]])
+        idslist.extend(ids[i,:nz.shape[0]])
+        if nz.shape[0] < ss.shape[1]: idslist.append(0)
     
-    vals = np.unique(vs)
-    print(vals.shape)
+    print(vs.max(), vs.min())
+    print(np.max(vslist))
+    
+    np.savez_compressed('img.npz', ids=ids, vs=vs, mptp=[vmin, vptp], sh=ss.shape)
+    with lzma.open('vss.xz', 'wb') as lf:
+        lf.write(struct.pack('!ffIIB',vmin , vptp, ss.shape[0], ss.shape[1], sparsity))
+        lf.write(b''.join([struct.pack('!B', i) for i in idslist]))
+        lf.write(b''.join([struct.pack('!B', v) for v in vslist]))
+        # lf.write(struct.pack(''))
+
     # print(ids[:100])
     # print(vs.shape, ids.shape)
-    np.savez_compressed('img.npz', ids=ids, vs=vs, mptp=[vmin, vptp], sh=ss.shape)
+    with np.load('img.npz') as f:
+        ids, vss, sh, mptp = f['ids'], f['vs'], f['sh'], f['mptp']
+    vmin = mptp[0]
+    vptp = mptp[1]
+
+    s = np.zeros(sh)
+    vss = (vss * vptp / 255) + vmin
+    tam = np.count_nonzero(ids, axis=1)
+    ids = ids - 1
+    for i in range(s.shape[0]):
+        s[i, ids[i,:tam[i]]] = vss[i,:tam[i]]
+
     # s = s.toarray()
     # Ps = D.T.dot(s).T
-    Ps = s.transpose().dot(D)# .reshape(Ps.shape[0], m11, m22, -1)
+    Ps = s.dot(D) + intersect# .reshape(Ps.shape[0], m11, m22, -1)
     print(Ps[0,0:3])
     print(Ps.shape)
     # Ps = np.asarray(par(delayed(recover_same_kron)(ps, d) for ps, d in 
@@ -131,18 +164,17 @@ if __name__ == "__main__":
     # img1 = image.reconstruct_from_patches_2d(Ps.reshape(Ps.shape[0], m11, m22), img_train.shape)
 
 
-    imgrgb = color.ycbcr2rgb(img1 * 255).clip(0,1)
+    imgrgb = (img1).clip(0,1)
     # imgrgb = (img1 / 255.).clip(0,1)
 
     # io.imshow_collection([img1, img4])
-    # io.imshow(imgrgb)
+    io.imshow(imgrgb)
     io.imsave('generated.png', imgrgb)
-    io.imsave('image.jpeg', color.ycbcr2rgb(img4  * 255).clip(-1,1))
-    io.imsave('dict.png', D)
-    # io.show()
+    io.imsave('image.jpeg', (img4).clip(-1,1))
+    io.show()
     # print(compare_psnr(img_train, imgrgb))
     # print(compare_psnr(img_train, img1.clip(-1,1)))
-    print(compare_psnr(color.ycbcr2rgb(img_train * 255).clip(0,1), imgrgb))
+    print(compare_psnr((img_train).clip(0,1), imgrgb))
     # print(compare_psnr(img_train/255., imgrgb))
     # print(compare_psnr(img_train, img4))
     exit()

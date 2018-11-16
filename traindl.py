@@ -3,12 +3,12 @@ import glob
 # import cv2
 from skimage import color
 import scipy.misc as io
-# from sklearn.feature_extraction import image
+from sklearn.feature_extraction import image
 # import gc
 import spams
 import dictlearn as dl
 
-dict_size = 64
+dict_size = 16
 target_sparsity = 5
 patch_size = (4,4)
 
@@ -35,14 +35,18 @@ if __name__ == "__main__":
     # print(dl.dct_dict(dict_size, 4).shape)
 
     iniD = np.zeros((patch_size[0]*patch_size[1]*3, dict_size))
-    iniD[::3] = dl.dct_dict(dict_size, patch_size[0])
-    iniD[-2::-3] = dl.dct_dict(dict_size, patch_size[0])
-    iniD[2::3] = dl.dct_dict(dict_size, patch_size[0])
+    iniD[::3] = 1.0
+    # iniD[-2::-3] = dl.dct_dict(dict_size, patch_size[0])
+    iniD[2::3] = 0.3
 
     param = {'D':np.asfortranarray(iniD),
+             'model': {'A': np.asfortranarray(np.zeros((dict_size, dict_size))), 
+                       'B': np.asfortranarray(np.zeros_like(iniD)), 
+                       'iter':0},
              'lambda1':target_sparsity,
-             'iter':1000,
-             'mode':3
+             'iter':500,
+             'mode':3,
+             'return_model': True
     }
 
     # Treinando tudo junto
@@ -50,22 +54,36 @@ if __name__ == "__main__":
     # patches = image.extract_patches_2d(color.rgb2yuv(img_trains[0]), patch_size)
     # patches = np.hstack((image.extract_patches_2d(color.rgb2yuv(img_train), patch_size)) for img_train in img_trains)
     patches = []
-    for img_train in img_trains:
-        img_train = img_train / 255.
-        for i in range(0, img_train.shape[0], patch_size[0]):
-            for j in range(0, img_train.shape[1], patch_size[1]):
-                if i + patch_size[0] <= img_train.shape[0] and j + patch_size[1] <= img_train.shape[1]:
-                    p = img_train[i:(i+patch_size[0]), j:(j+patch_size[1])]
-                    patches.append(p)
+    for i in np.random.choice(len(img_trains), len(img_trains), replace=False):
+        img_train = img_trains[i]
+        if img_train.shape[-1] == 4:
+            img_train = color.rgba2rgb(img_train)
+        img_train = img_train.astype(np.float)
+        if img_train.max() > 1.0: img_train /= 255
+        # for i in range(0, img_train.shape[0], patch_size[0]):
+        #     for j in range(0, img_train.shape[1], patch_size[1]):
+        #         if i + patch_size[0] <= img_train.shape[0] and j + patch_size[1] <= img_train.shape[1]:
+        #             p = img_train[i:(i+patch_size[0]), j:(j+patch_size[1])]
+        #             patches.append(p)
         # patches = np.array(patches)
-        # # print(patches.shape)        
-        # X = patches.reshape(patches.shape[0], -1)[::1]
+        patches = image.extract_patches_2d(img_train, patch_size)
+        print(patches.shape)        
+        X = patches.reshape(patches.shape[0], -1)[::1]
+        print(X.shape)
         # D = spams.trainDL(np.asfortranarray(X.T), **param)
-        # param['D'] = D
+        D, model = spams.trainDL(np.asfortranarray(X.T), **param)
+        param['D'] = D
+        param['model'] = model
 
-    patches = np.array(patches)
+    # patches = np.array(patches)
     # print(patches.shape)
-    X = patches.reshape(patches.shape[0], -1)[::1]
+    # X = patches.reshape(patches.shape[0], -1)[::1]
+    # m = np.mean(X)
+    # m = 0.0
+    # s = np.std(X)
+    # s = 1.0
+    # X -= m
+    # X /= s
     # print(X.max())
     # print(X.shape, X.dtype)
     # input()
@@ -77,8 +95,12 @@ if __name__ == "__main__":
     #     p2.extend(np.hsplit(p, range(patch_size[1], img_train.shape[1], patch_size[1])))
     # X = np.vstack([p.reshape(1, -1) for p in p2])
     # print(X.shape, X.dtype)
-    D = spams.trainDL(np.asfortranarray(X.T), **param).T
+    # D, model = spams.trainDL(np.asfortranarray(X.T), **param)
+    D = D.T
     # D = np.array(dl.ksvd(X.T, iniD, 1000, target_sparsity)).T
     print(D.shape)
+    print(model['A'].shape)
+    print(model['B'].shape)
+    print(model['iter'])
 
-    np.savetxt('dltrainfiles/dl4_rgb_ds64_Bunny.txt', D)
+    np.savetxt('dltrainfiles/dl4_rgb_ds16_cartoon.txt', D)

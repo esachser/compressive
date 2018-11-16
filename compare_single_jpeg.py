@@ -9,12 +9,12 @@ import matplotlib.pyplot as plt
 from scipy.fftpack import idct
 import matplotlib.pyplot as plt
 
-m11, m22 = 8,8
+m11, m22 = 4,4
 
 if __name__ == '__main__':
     from skimage.measure import compare_psnr
 
-    D = np.loadtxt('dltrainfiles/dl8_yuv_ds128_720pmoria2.txt')
+    D = np.loadtxt('dltrainfiles/dl4_rgb_ds16_maps.txt')
     
     dir_images = "/home/eduardo/Imagens/*.png"
     images = glob.glob(dir_images)
@@ -22,15 +22,20 @@ if __name__ == '__main__':
     for i, img in enumerate(images):
         print(i, img)
     imgidx = int(input("Escolha do id da imagem: "))
-    img_train = color.rgb2yuv(io.imread(images[imgidx])[:,:,:3])
+
+    image = io.imread(images[imgidx])
+    if image.shape[-1] == 4:
+        image = color.rgba2rgb(image)
+
+    if image.max() > 1.0:
+        img_train = image / 255.
+    else:
+        img_train = image
+    # img_train = io.imread(images[imgidx])[:,:,:3]
     nl, nc, _= img_train.shape
     ml = nl % m11
     mc = nc % m22
     img_train = img_train[:(nl - ml), :(nc - mc), :].astype(float)
-
-    nl, nc, _= img_train.shape
-
-    img2 = io.imread('image.jpeg').astype(np.float)[:,:,:3] / 255.0
 
     # Recupera sx
     
@@ -55,7 +60,7 @@ if __name__ == '__main__':
     vptp = mptp[1]
 
     s = np.zeros(sh)
-    vss = (vss * vptp / 65535) + vmin
+    vss = (vss * vptp / 255) + vmin
     tam = np.count_nonzero(ids, axis=1)
     ids = ids - 1
     for i in range(s.shape[0]):
@@ -68,12 +73,13 @@ if __name__ == '__main__':
     print(img1.shape)
     print("Recovery time: %f" % (time.monotonic() - t0))
 
-    imgrgb = color.yuv2rgb(img1).clip(0,1)
+    imgrgb = (img1).clip(0,1)
 
-    print(compare_psnr(color.yuv2rgb(img_train).clip(0,1), imgrgb))
-    print(compare_psnr(color.yuv2rgb(img_train).clip(0,1), img2))
+    img2 = io.imread('image.jpeg') / 255.
+    print(compare_psnr(img_train, imgrgb))
+    print(compare_psnr(img_train, img2))
     io.imsave('rcv.png', imgrgb)
-    # # io.imshow(imgrgb)
+    # io.imshow(imgrgb)
     # io.show()
     # io.imshow(imgrgb)
     # io.show()
