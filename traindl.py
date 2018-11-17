@@ -6,13 +6,23 @@ import scipy.misc as io
 from sklearn.feature_extraction import image
 # import gc
 import spams
-import dictlearn as dl
+# import dictlearn as dl
+import sys
 
 dict_size = 16
 target_sparsity = 5
 patch_size = (4,4)
 
 if __name__ == "__main__":
+    print(sys.argv)
+    if len(sys.argv) < 5:
+        print("Erro nos paramentros")
+        exit(0)
+
+    dict_size = int(sys.argv[1])
+    target_sparsity = int(sys.argv[2])
+    patch_size = (int(sys.argv[3]),int(sys.argv[3]))
+
     dir_images = "/home/eduardo/Documentos/compressive/trainframes/*"
     images = glob.glob(dir_images)
     # for i, img in enumerate(images):
@@ -34,17 +44,17 @@ if __name__ == "__main__":
     # dl.visualize_dictionary(dl.dct_dict(dict_size, 4), 5, 4)
     # print(dl.dct_dict(dict_size, 4).shape)
 
-    iniD = np.zeros((patch_size[0]*patch_size[1]*3, dict_size))
-    iniD[::3] = 1.0
-    # iniD[-2::-3] = dl.dct_dict(dict_size, patch_size[0])
-    iniD[2::3] = 0.3
+    iniD = np.random.randn(patch_size[0]*patch_size[1]*3, dict_size)
+    # iniD[::3] = np.random.randn(patch_size[0]*patch_size[1])
+    # iniD[1::3] = 1.0
+    # iniD[2::3] = 0.3
 
     param = {'D':np.asfortranarray(iniD),
              'model': {'A': np.asfortranarray(np.zeros((dict_size, dict_size))), 
                        'B': np.asfortranarray(np.zeros_like(iniD)), 
                        'iter':0},
              'lambda1':target_sparsity,
-             'iter':500,
+             'iter':2500,
              'mode':3,
              'return_model': True
     }
@@ -71,6 +81,7 @@ if __name__ == "__main__":
         X = patches.reshape(patches.shape[0], -1)[::1]
         print(X.shape)
         # D = spams.trainDL(np.asfortranarray(X.T), **param)
+        param['iter'] = min(param['iter'], X.shape[0])
         D, model = spams.trainDL(np.asfortranarray(X.T), **param)
         param['D'] = D
         param['model'] = model
@@ -103,4 +114,4 @@ if __name__ == "__main__":
     print(model['B'].shape)
     print(model['iter'])
 
-    np.savetxt('dltrainfiles/dl4_rgb_ds16_cartoon.txt', D)
+    np.savetxt("dics/%s_p%d_d%d.txt" % (sys.argv[4], patch_size[0], dict_size), D)
