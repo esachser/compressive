@@ -4,6 +4,7 @@ import spams
 import time
 from skimage import io, color
 import matplotlib.pyplot as plt
+import sys
 
 import dictlearn as dl
 
@@ -16,7 +17,11 @@ pc = 4
 if __name__ == "__main__":
     from skimage.measure import compare_psnr
 
-    D = np.loadtxt('dltrainfiles/dl4_rgb_ds16_cartoon.txt')
+    D = np.loadtxt(sys.argv[1])
+    sizeL = int(sys.argv[4])
+    sizeC = int(sys.argv[5])
+    pl = int(sys.argv[2])
+    pc = int(sys.argv[3])
     # D = np.loadtxt('ksvdtrain/ksvd8_rgb_ds128.txt')
     print(D.shape)
     

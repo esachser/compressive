@@ -15,12 +15,12 @@ def removefiles(folder):
             print(e)
 
 
-vnames = ['720p50_parkrun_ter.y4m', 'ducks_take_off_444_720p50.y4m', 'garden_sif.y4m', 'in_to_tree_444_720p50.y4m', 'waterfall_cif.y4m']
+vnames = ['tennis_sif.y4m', 'stefan_sif.y4m']
 
 dirtrain = os.path.abspath('../trainframes/')
 
 # Quantos segundos entre cada aquisição
-secinterval = 3
+secinterval = 1
 
 def main():
     removefiles(dirtrain)
